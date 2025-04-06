@@ -13,12 +13,15 @@ def load_csv(file_path):
 
 def merge_nodes(tx, label, data, match_field="id"):
     for record in data.to_dict(orient="records"):
-        # Fix: Ensure lists/arrays are not misinterpreted
         props = {
             k: v for k, v in record.items()
-            if not (isinstance(v, float) and pd.isna(v))  # allow arrays and strings, skip NaN
+            if not (isinstance(v, float) and pd.isna(v))
         }
 
+        if match_field not in record:
+            continue
+
+        props[match_field] = record[match_field]  # 🔥 make sure match field is set
         match_clause = f"{match_field}: ${match_field}"
         update_clause = ", ".join([f"{k}: ${k}" for k in props])
         query = f"""
@@ -27,6 +30,9 @@ def merge_nodes(tx, label, data, match_field="id"):
         """
         tx.run(query, **props)
 
+def create_relationships(tx, query, parameters_list):
+    for params in parameters_list:
+        tx.run(query, **params)
 
 def create_keyword_array_per_film(film_df, keywords_df):
     grouped = keywords_df.groupby("film_id")["keyword"].apply(list).reset_index()
@@ -40,6 +46,15 @@ def apply_ratings_to_films(films_df, ratings_df, providers_df):
     pivot = ratings_df.pivot(index="film_id", columns="key", values="rating").reset_index()
     return films_df.merge(pivot, on="film_id", how="left")
 
+def create_film_planet_relationships(tx, film_planets_df):
+    for row in film_planets_df.to_dict(orient="records"):
+        tx.run("""
+            MATCH (f:Film {id: $film_id})
+            MATCH (p:Planet {id: $planet_id})
+            MERGE (f)-[:FEATURES_PLANET]->(p)
+        """, film_id=row["film_id"], planet_id=row["planet_id"])
+        print(f"Linking film {row['film_id']} with planet {row['planet_id']}")
+
 def import_all():
     with driver.session() as session:
         # Load normalized tables
@@ -48,10 +63,11 @@ def import_all():
         people = load_csv("tables/normalized_people.csv")
         species = load_csv("tables/normalized_species.csv")
         vehicles = load_csv("tables/normalized_vehicles.csv")
-        starships = load_csv("tables/starships.csv")  # non-normalized
+        starships = load_csv("tables/starships.csv")
         keywords = load_csv("tables/normalized_keywords.csv")
         ratings = load_csv("tables/normalized_ratings.csv")
         providers = load_csv("tables/normalized_rating_providers.csv")
+        film_planets = load_csv("tables/film_planets.csv")
 
         # Preprocessing
         films["opening_crawl"] = films["opening_crawl"].str.replace('\n', ' ', regex=False)
@@ -65,6 +81,62 @@ def import_all():
         session.execute_write(merge_nodes, "Species", species, match_field="species_id")
         session.execute_write(merge_nodes, "Vehicle", vehicles, match_field="vehicle_id")
         session.execute_write(merge_nodes, "Starship", starships, match_field="id")
+
+        print("🔗 Creating relationships...")
+
+        # 1. Person FROM Planet
+        people_from = people.dropna(subset=["homeworld_id"])
+        from_params = people_from[["person_id", "homeworld_id"]].to_dict(orient="records")
+        session.execute_write(
+            create_relationships,
+            """
+            MATCH (p:Person {person_id: $person_id})
+            MATCH (pl:Planet {planet_id: $homeworld_id})
+            MERGE (p)-[:FROM]->(pl)
+            """,
+            from_params
+        )
+
+        # 2. Film FEATURES_VEHICLE (example only – replace with actual data if you have it)
+        # TEMP: Let's assume film 1 features vehicle 1 and 2
+        features_vehicle = [
+            {"film_id": 1, "vehicle_id": 1},
+            {"film_id": 1, "vehicle_id": 2},
+            {"film_id": 2, "vehicle_id": 2}
+        ]
+        session.execute_write(
+            create_relationships,
+            """
+            MATCH (f:Film {film_id: $film_id})
+            MATCH (v:Vehicle {vehicle_id: $vehicle_id})
+            MERGE (f)-[:FEATURES_VEHICLE]->(v)
+            """,
+            features_vehicle
+        )
+
+        # 3. Film FEATURES_PLANET (inferred through people)
+        features_planet = people.dropna(subset=["homeworld_id"])
+        features_planet = features_planet[["homeworld_id", "person_id"]]
+
+        inferred_links = []
+        for _, row in features_planet.iterrows():
+            person_id = row["person_id"]
+            homeworld_id = row["homeworld_id"]
+            # Assume every film linked to this person features the planet
+            inferred_links.append({"person_id": person_id, "planet_id": homeworld_id})
+
+        session.execute_write(
+            create_relationships,
+            """
+            MATCH (p:Person {person_id: $person_id})<-[:APPEARED_IN]-(f:Film)
+            MATCH (pl:Planet {planet_id: $planet_id})
+            MERGE (f)-[:FEATURES_PLANET]->(pl)
+            """,
+            inferred_links
+        )
+
+        session.execute_write(create_film_planet_relationships, film_planets)
+
 
     driver.close()
     print("✅ Import complete using normalized tables!")
