@@ -15,8 +15,8 @@ RETURN p.name;
 // Part C
 
 MATCH (f:Film)
-WHERE f.release_date > date("1980-12-31") AND f.imdb_rating >= 5
-RETURN f.title, f.release_date, f.imdb_rating;
+WHERE date(f.release_date) > date("1980-12-31") AND f.imdb_rating >= 5
+RETURN f.title, f.release_date, f.imdb_rating
 
 // Part D
 
