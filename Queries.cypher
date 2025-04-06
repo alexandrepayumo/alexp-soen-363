@@ -34,9 +34,9 @@ LIMIT 1
 
 // Part F
 
-CALL db.index.fulltext.createNodeIndex(
-  "filmOverviewIndex", ["Film"], ["overview"]
-);
+CREATE FULLTEXT INDEX filmOverviewIndex
+FOR (f:Film)
+ON EACH [f.overview];
 
 // Part G
 
