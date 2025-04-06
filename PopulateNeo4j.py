@@ -58,8 +58,8 @@ def apply_ratings_to_films(films_df, ratings_df, providers_df):
 def create_film_planet_relationships(tx, film_planets_df):
     for row in film_planets_df.to_dict(orient="records"):
         tx.run("""
-            MATCH (f:Film {id: $film_id})
-            MATCH (p:Planet {id: $planet_id})
+            MATCH (f:Film {film_id: $film_id})
+            MATCH (p:Planet {planet_id: $planet_id})
             MERGE (f)-[:FEATURES_PLANET]->(p)
         """, film_id=row["film_id"], planet_id=row["planet_id"])
         print(f"Linking film {row['film_id']} with planet {row['planet_id']}")
