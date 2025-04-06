@@ -27,9 +27,10 @@ RETURN DISTINCT f.title, collect(v.name) AS vehicles;
 // Part E
 
 MATCH (f:Film)
-RETURN f.title, size(f.keywords) AS keywordCount
+WITH f, coalesce(size(f.keywords), 0) AS keywordCount
+RETURN f.title, keywordCount
 ORDER BY keywordCount DESC
-LIMIT 1;
+LIMIT 1
 
 // Part F
 
