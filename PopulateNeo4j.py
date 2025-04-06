@@ -21,14 +21,23 @@ def merge_nodes(tx, label, data, match_field="id"):
         if match_field not in record:
             continue
 
-        props[match_field] = record[match_field]  # 🔥 make sure match field is set
-        match_clause = f"{match_field}: ${match_field}"
-        update_clause = ", ".join([f"{k}: ${k}" for k in props])
+        props[match_field] = record[match_field]
+
+        # Cypher doesn't like lists passed into SET n += {...}
+        # So we will unpack explicitly
+        set_lines = []
+        for key in props:
+            set_lines.append(f"n.{key} = ${key}")
+        set_clause = ", ".join(set_lines)
+
         query = f"""
-        MERGE (n:{label} {{{match_clause}}})
-        SET n += {{{update_clause}}}
+        MERGE (n:{label} {{{match_field}: ${match_field}}})
+        SET {set_clause}
         """
         tx.run(query, **props)
+
+def delete_all_nodes(tx):
+    tx.run("MATCH (n) DETACH DELETE n")
 
 def create_relationships(tx, query, parameters_list):
     for params in parameters_list:
@@ -57,6 +66,9 @@ def create_film_planet_relationships(tx, film_planets_df):
 
 def import_all():
     with driver.session() as session:
+        print("🧹 Deleting all existing nodes and relationships...")
+        session.execute_write(delete_all_nodes)
+
         # Load normalized tables
         films = load_csv("tables/updated_normalized_films.csv")
         planets = load_csv("tables/normalized_planets.csv")
@@ -75,6 +87,7 @@ def import_all():
         films = apply_ratings_to_films(films, ratings, providers)
 
         print("Merging nodes with deduplication...")
+        print(films[["title", "keywords"]])
         session.execute_write(merge_nodes, "Film", films, match_field="film_id")
         session.execute_write(merge_nodes, "Person", people, match_field="person_id")
         session.execute_write(merge_nodes, "Planet", planets, match_field="planet_id")
